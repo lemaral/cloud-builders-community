@@ -1,9 +1,18 @@
 package builder
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"io"
+	"io/ioutil"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
+	"cloud.google.com/go/storage"
 	"golang.org/x/oauth2/google"
 	compute "google.golang.org/api/compute/v1"
 )
@@ -33,6 +42,7 @@ func GCEService(ctx context.Context) (*compute.Service, error) {
 
 //StartWindowsVM starts a Windows VM on GCE and returns host, username, password.
 func StartWindowsVM(ctx context.Context, service *compute.Service, projectID string) (*compute.Instance, error) {
+	startupCmd := `winrm set winrm/config/Service/Auth @{Basic="true”} & winrm set winrm/config/Service @{AllowUnencrypted="true”}`
 	instance := &compute.Instance{
 		Name:        instanceName,
 		MachineType: prefix + projectID + "/zones/" + zone + "/machineTypes/n1-standard-1",
@@ -44,6 +54,14 @@ func StartWindowsVM(ctx context.Context, service *compute.Service, projectID str
 				InitializeParams: &compute.AttachedDiskInitializeParams{
 					DiskName:    "windows-pd",
 					SourceImage: imageURL,
+				},
+			},
+		},
+		Metadata: &compute.Metadata{
+			Items: []*compute.MetadataItems{
+				&compute.MetadataItems{
+					Key:   "windows-startup-script-bat",
+					Value: &startupCmd,
 				},
 			},
 		},
@@ -103,4 +121,109 @@ func StopWindowsVM(ctx context.Context, service *compute.Service, projectID stri
 		return err
 	}
 	return nil
+}
+
+//NewGCSClient creates a new GCS client.
+func NewGCSClient(ctx context.Context) (*storage.Client, error) {
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		log.Printf("Failed to create client: %v", err)
+		return nil, err
+	}
+	return client, nil
+}
+
+//WriteFileToGCS writes a stream to an existing GCS bucket.
+func WriteFileToGCS(ctx context.Context, client *storage.Client, bucketname string, filename string, reader io.Reader) error {
+	bucket := client.Bucket(bucketname)
+	obj := bucket.Object(filename)
+
+	w := obj.NewWriter(ctx)
+	if _, err := io.Copy(w, reader); err != nil {
+		log.Printf("Failed to write to GCS object: %v", err)
+		return err
+	}
+
+	if err := w.Close(); err != nil {
+		log.Printf("Failed to close GCS object: %v", err)
+		return err
+	}
+	return nil
+}
+
+//ReadFileFromGCS reads a file from an existing GCS bucket and returns bytes
+func ReadFileFromGCS(ctx context.Context, client *storage.Client, bucketname string, filename string) ([]byte, error) {
+	bucket := client.Bucket(bucketname)
+	obj := bucket.Object(filename)
+
+	r, err := obj.NewReader(ctx)
+	if err != nil {
+		log.Printf("Failed to open GCS object: %v", err)
+		return nil, err
+	}
+	defer r.Close()
+
+	bytes, err := ioutil.ReadAll(r)
+	if err != nil {
+		log.Printf("Failed to read from GCS object: %v", err)
+		return nil, err
+	}
+	return bytes, nil
+}
+
+//ZipUploadDir zips and uploads a dir to GCS.
+func ZipUploadDir(ctx context.Context, client *storage.Client, projectID string) (string, string, error) {
+	buf := new(bytes.Buffer)
+	w := zip.NewWriter(buf)
+
+	//Step through files in workspace directory
+	err := filepath.Walk("/workspace", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			log.Printf("Error accessing file %s: %v", path, err)
+			return err
+		}
+
+		if !info.IsDir() {
+			//Add file to in-memory zip
+			filename := strings.Replace(path, "/workspace/", "", 1)
+			f, err := w.Create(filename)
+			if err != nil {
+				log.Printf("Error adding file %s to ZIP", filename)
+				return err
+			}
+			bytes, err := ioutil.ReadFile(path)
+			if err != nil {
+				log.Printf("Error reading file %s", path)
+				return err
+			}
+			_, err = f.Write(bytes)
+			if err != nil {
+				log.Printf("Error writing file %s to ZIP", path)
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("Error walking workspace directory: %v", err)
+		return "", "", err
+	}
+	err = w.Close()
+	if err != nil {
+		log.Printf("Error closing zip file: %v", err)
+		return "", "", err
+	}
+
+	//Write ZIP to GCS
+	bucketname := "cloudbuild-windows-" + projectID
+	timestamp := time.Now().Format(time.RFC3339)
+	filename := "cloudbuild-windows-" + timestamp + ".zip"
+	log.Printf("Writing file %s to GCS bucket %s", filename, bucketname)
+	err = WriteFileToGCS(ctx, client, bucketname, filename, buf)
+
+	return bucketname, filename, nil
+}
+
+//DownloadUnzipDir downloads and unzips a dir from GCS.
+func DownloadUnzipDir() {
 }
