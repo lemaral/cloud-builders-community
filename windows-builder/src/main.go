@@ -1,24 +1,54 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+
+	"./builder"
+	compute "google.golang.org/api/compute/v1"
+)
+
+var (
+	inst      *compute.Instance
+	host      string
+	username  string
+	password  string
+	container string
+	args      string
+	projectID string
 )
 
 func main() {
 	log.Printf("Starting Windows builder")
+	ctx := context.Background()
+
 	//Parse environment variables.
-	host := os.Getenv("HOST")
-	username := os.Getenv("USERNAME")
-	password := os.Getenv("PASSWORD")
-	container := os.Getenv("NAME")
-	args := os.Getenv("ARGS")
+	host = os.Getenv("HOST")
+	username = os.Getenv("USERNAME")
+	password = os.Getenv("PASSWORD")
+	container = os.Getenv("NAME")
+	args = os.Getenv("ARGS")
+	projectID = os.Getenv("PROJECT_ID")
 
 	//Start a Windows VM on GCE in the background if required.
+	if (host == "") || (username == "") || (password == "") {
+		log.Print("Starting Windows VM")
+		svc, err := builder.GCEService(ctx)
+		if err != nil {
+			log.Fatalf("Failed to start GCE service: %v", err)
+		}
+		inst, err = builder.StartWindowsVM(ctx, svc, projectID)
+		if err != nil {
+			log.Fatalf("Failed to start Windows VM: %v", err)
+		}
+		//TODO: get host, username, password etc.
+	}
 
 	//Sync workspace to GCS.
 
-	//Connect to Windows host and download from GCS.
+	//Connect to Windows host, download from GCS, and unzip.
+	//powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('foo.zip', 'bar'); }"
 
 	//Execute build step container and stream results to stdout.
 
