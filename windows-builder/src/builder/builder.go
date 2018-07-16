@@ -276,6 +276,7 @@ func NewGCSClient(ctx context.Context) (*storage.Client, error) {
 
 //WriteFileToGCS writes a stream to an existing GCS bucket.
 func WriteFileToGCS(ctx context.Context, client *storage.Client, bucketname string, filename string, reader io.Reader) error {
+	//TODO: Create bucket if it doesn't exist
 	bucket := client.Bucket(bucketname)
 	obj := bucket.Object(filename)
 
