@@ -42,10 +42,22 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to start Windows VM: %v", err)
 		}
-		//TODO: get host, username, password etc.
+		//TODO: set host, username
+		password, err = builder.ResetWindowsPassword(projectID, svc, inst, username)
+
+		//Set firewall rule.
+		err = builder.SetFirewallRule(ctx, svc, projectID)
+		if err != nil {
+			log.Fatalf("Failed to set ingress firewall rule: %v", err)
+		}
 	}
 
 	//Sync workspace to GCS.
+	client, err := builder.NewGCSClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to start GCS client")
+	}
+	_, _, err = builder.ZipUploadDir(ctx, client, projectID)
 
 	//Connect to Windows host, download from GCS, and unzip.
 	//powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('foo.zip', 'bar'); }"

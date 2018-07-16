@@ -4,6 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"io"
 	"io/ioutil"
 	"log"
@@ -11,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/masterzen/winrm"
 
 	"cloud.google.com/go/storage"
 	"golang.org/x/oauth2/google"
@@ -123,6 +132,138 @@ func StopWindowsVM(ctx context.Context, service *compute.Service, projectID stri
 	return nil
 }
 
+//SetFirewallRule allows ingress on WinRM port.
+func SetFirewallRule(ctx context.Context, service *compute.Service, projectID string) error {
+	firewallRule := &compute.Firewall{
+		Allowed: []*compute.FirewallAllowed{
+			&compute.FirewallAllowed{
+				IPProtocol: "tcp",
+				Ports:      []string{"5986"},
+			},
+		},
+		Direction:    "INGRESS",
+		Name:         "allow-winrm-ingress",
+		SourceRanges: []string{"0.0.0.0/0"},
+	}
+	_, err := service.Firewalls.Insert(projectID, firewallRule).Do()
+	if err != nil {
+		log.Printf("Error setting firewall rule: %v", err)
+		return err
+	}
+	return nil
+}
+
+//WindowsPasswordConfig stores metadata to be sent to GCE.
+type WindowsPasswordConfig struct {
+	key      *rsa.PrivateKey
+	password string
+	UserName string    `json:"userName"`
+	Modulus  string    `json:"modulus"`
+	Exponent string    `json:"exponent"`
+	Email    string    `json:"email"`
+	ExpireOn time.Time `json:"expireOn"`
+}
+
+//WindowsPasswordResponse stores data received from GCE.
+type WindowsPasswordResponse struct {
+	UserName          string `json:"userName"`
+	PasswordFound     bool   `json:"passwordFound"`
+	EncryptedPassword string `json:"encryptedPassword"`
+	Modulus           string `json:"modulus"`
+	Exponent          string `json:"exponent"`
+	ErrorMessage      string `json:"errorMessage"`
+}
+
+//ResetWindowsPassword securely resets the admin Windows password.
+//See https://cloud.google.com/compute/docs/instances/windows/automate-pw-generation
+func ResetWindowsPassword(projectID string, service *compute.Service, inst *compute.Instance, username string) (string, error) {
+	//Create random key and encode
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		log.Printf("Failed to generate random RSA key: %v", err)
+		return "", err
+	}
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, uint32(key.E))
+	wpc := WindowsPasswordConfig{
+		key:      key,
+		UserName: username,
+		Modulus:  base64.StdEncoding.EncodeToString(key.N.Bytes()),
+		Exponent: base64.StdEncoding.EncodeToString(buf[1:]),
+		Email:    "nobody@nowhere.com",
+		ExpireOn: time.Now().Add(time.Minute * 5),
+	}
+	data, err := json.Marshal(wpc)
+	dstring := string(data)
+	if err != nil {
+		log.Printf("Failed to marshal JSON: %v", err)
+		return "", err
+	}
+
+	//Write key to instance metadata and wait for op to complete
+	log.Print("Writing Windows instance metadata for password reset.")
+	inst.Metadata.Items = append(inst.Metadata.Items, &compute.MetadataItems{
+		Key:   "windows-keys",
+		Value: &dstring,
+	})
+	op, err := service.Instances.SetMetadata(projectID, zone, instanceName, &compute.Metadata{
+		Fingerprint: inst.Metadata.Fingerprint,
+		Items:       inst.Metadata.Items,
+	}).Do()
+	if err != nil {
+		log.Printf("Failed to set instance metadata: %v", err)
+		return "", err
+	}
+	for {
+		newop, err := service.ZoneOperations.Get(projectID, zone, op.Name).Do()
+		if err != nil {
+			log.Printf("Failed to update operation status: %v", err)
+			return "", err
+		}
+		if newop.Status == "DONE" {
+			break
+		} else {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	//Read and decode password
+	log.Print("Waiting for Windows password response.")
+	timeout := time.Now().Add(time.Minute * 3)
+	hash := sha1.New()
+	random := rand.Reader
+	for time.Now().Before(timeout) {
+		output, err := service.Instances.GetSerialPortOutput(projectID, zone, instanceName).Port(4).Do()
+		if err != nil {
+			log.Printf("Unable to get serial port output: %v", err)
+			return "", err
+		}
+		responses := strings.Split(output.Contents, "\n")
+		for _, response := range responses {
+			var wpr WindowsPasswordResponse
+			if err := json.Unmarshal([]byte(response), &wpr); err != nil {
+				continue
+			}
+			if wpr.Modulus == wpc.Modulus {
+				decodedPassword, err := base64.StdEncoding.DecodeString(wpr.EncryptedPassword)
+				if err != nil {
+					log.Printf("Cannot Base64 decode password: %v", err)
+					return "", err
+				}
+				password, err := rsa.DecryptOAEP(hash, random, wpc.key, decodedPassword, nil)
+				if err != nil {
+					log.Printf("Cannot decrypt password response: %v", err)
+					return "", err
+				}
+				return string(password), nil
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	err = errors.New("Could not retrieve password before timeout")
+	return "", err
+}
+
 //NewGCSClient creates a new GCS client.
 func NewGCSClient(ctx context.Context) (*storage.Client, error) {
 	client, err := storage.NewClient(ctx)
@@ -224,6 +365,13 @@ func ZipUploadDir(ctx context.Context, client *storage.Client, projectID string)
 	return bucketname, filename, nil
 }
 
-//DownloadUnzipDir downloads and unzips a dir from GCS.
-func DownloadUnzipDir() {
+//OpenWindowsClient opens a connection to the Windows host.
+func OpenWindowsClient(host string, port int, user string, pass string) (*winrm.Client, error) {
+	endpoint := winrm.NewEndpoint(host, port, true, true, nil, nil, nil, 0)
+	client, err := winrm.NewClient(endpoint, user, pass)
+	if err != nil {
+		log.Printf("Error opening connection to Windows host: %v", err)
+		return nil, err
+	}
+	return client, nil
 }
