@@ -70,4 +70,8 @@ func TestResetWindowsPassword(t *testing.T) {
 	}
 	password, err := ResetWindowsPassword(projectID, svc, inst, user.Name)
 	log.Printf("Got password %s", password)
+	err = StopWindowsVM(ctx, svc, projectID)
+	if err != nil {
+		t.Errorf("Failed to stop Windows VM: %v", err)
+	}
 }

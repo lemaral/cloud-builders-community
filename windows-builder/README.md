@@ -3,16 +3,15 @@
 This is an experimental Windows builder.  If this is your first time using Container Builder, follow the [Quickstart for Docker](https://cloud.google.com/container-builder/docs/quickstart-docker) to
 get started.
 
-Build steps are run inside [Windows containers](https://docs.microsoft.com/en-us/virtualization/windowscontainers/about/).  The Container Builder workspace, normally mounted on `/workspace`, is synced to the Windows host and mounted as `C:\workspace`.  The container must exit when the build is complete; the workspace is then synced back to Container Builder.
+Build steps are run inside [Windows containers](https://docs.microsoft.com/en-us/virtualization/windowscontainers/about/).  The Container Builder workspace, normally available on `/workspace`, is copied to Cloud Storage and from there to the Windows host, before being mounted inside the container at `C:\workspace`.  The container must exit when the build is complete; the workspace is then synced back to Container Builder.
 
-If a Windows host, username and password are provided to the build step, then the build will take place on that host.  Docker must be preinstalled, TCP port 5986 must be open to the Internet, and the host must support Basic Authentication.  Otherwise, an `n1-standard-1` Windows VM on Compute Engine is started within the project, used for the build, and then shut down afterwards.  It can take many seconds for Windows to boot and pull the container, so frequent builds will benefit from a persistent VM.
+If a Windows host, username and password are provided to the build step, then the build will take place on that host.  Docker must be preinstalled, TCP port 5986 (WinRM over SSL) must be open to the Internet, and the host must support Basic Authentication.  Otherwise, an `n1-standard-1` Windows VM on Compute Engine is started within the project, used for the build, and then shut down afterwards.  It may take several minutes for Windows to boot and pull the container, so frequent builds will benefit from a persistent VM.
 
 ## Usage
 
-First, clone this code, create a GCS bucket, and build the builder:
+First, clone this code and build the builder:
 
 ```
-gsutil mb gs://cloudbuild-windows-$PROJECT
 gcloud container builds submit --config=cloudbuild.yaml .
 ```
 
@@ -28,7 +27,7 @@ gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:$CB_SA_E
 gcloud services enable compute.googleapis.com
 ```
 
-Then, use the build step as follows:
+Then, use the build step in your `cloudbuild.yaml` as follows, giving the name of your Windows container image in `NAME`.  For example:
 
 ```
 steps:
@@ -50,3 +49,8 @@ steps:
     - 'NAME=gcr.io/$PROJECT_ID/build-tool'
     - 'ARGS=-v'
 ```
+
+## Security
+
+Traffic between Container Builder and the Windows VM is encrypted over SSL, and the initial password reset follows Google best practices.  However, enterprise servers using Kerberos or other more advanced authentication techniques will require code changes.
+
