@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -27,10 +28,11 @@ import (
 )
 
 const (
-	prefix       = "https://www.googleapis.com/compute/v1/projects/"
-	imageURL     = prefix + "windows-cloud/global/images/windows-server-1709-dc-core-for-containers-v20180508"
-	zone         = "us-central1-f"
-	instanceName = "windows-builder"
+	prefix         = "https://www.googleapis.com/compute/v1/projects/"
+	imageURL       = prefix + "windows-cloud/global/images/windows-server-1709-dc-core-for-containers-v20180508"
+	zone           = "us-central1-f"
+	instanceName   = "windows-builder"
+	computeTimeout = 120 * time.Second
 )
 
 //GCEService returns a Compute Engine service.
@@ -214,17 +216,10 @@ func ResetWindowsPassword(projectID string, service *compute.Service, inst *comp
 		log.Printf("Failed to set instance metadata: %v", err)
 		return "", err
 	}
-	for {
-		newop, err := service.ZoneOperations.Get(projectID, zone, op.Name).Do()
-		if err != nil {
-			log.Printf("Failed to update operation status: %v", err)
-			return "", err
-		}
-		if newop.Status == "DONE" {
-			break
-		} else {
-			time.Sleep(1 * time.Second)
-		}
+	err = WaitForComputeOperation(service, projectID, zone, op)
+	if err != nil {
+		log.Printf("Compute operation timed out")
+		return "", err
 	}
 
 	//Read and decode password
@@ -262,6 +257,25 @@ func ResetWindowsPassword(projectID string, service *compute.Service, inst *comp
 	}
 	err = errors.New("Could not retrieve password before timeout")
 	return "", err
+}
+
+//WaitForComputeOperation waits for a compute operation
+func WaitForComputeOperation(service *compute.Service, projectID string, zone string, op *compute.Operation) error {
+	log.Printf("Waiting for operation %+v to complete", op.Name)
+	timeout := time.Now().Add(computeTimeout)
+	for time.Now().Before(timeout) {
+		newop, err := service.ZoneOperations.Get(projectID, zone, op.Name).Do()
+		if err != nil {
+			log.Printf("Failed to update operation status: %v", err)
+			return err
+		}
+		if newop.Status == "DONE" {
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	err := fmt.Errorf("Compute operation %s timed out", op.Name)
+	return err
 }
 
 //NewGCSClient creates a new GCS client.
