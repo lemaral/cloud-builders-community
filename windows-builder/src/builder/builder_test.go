@@ -4,45 +4,13 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
-	"os/user"
 	"reflect"
 	"testing"
-	"time"
 )
 
 const (
 	projectID = "cloud-builders-community-test"
 )
-
-func TestStartRefreshStopWindowsVM(t *testing.T) {
-	ctx := context.Background()
-	svc, err := GCEService(ctx)
-	if err != nil {
-		t.Errorf("Error starting GCE service %v", err)
-	}
-	inst, err := StartWindowsVM(ctx, svc, projectID)
-	if err != nil {
-		t.Errorf("Failed to start Windows VM: %v", err)
-	}
-	log.Printf("Got instance %+v", *inst)
-	for {
-		time.Sleep(3 * time.Second)
-		log.Printf("Refreshing instance %v", inst.Name)
-		inst, err = RefreshWindowsVM(ctx, svc, projectID)
-		if err != nil {
-			t.Errorf("Failed to refresh Windows VM: %v", err)
-		}
-		log.Printf("Got instance status: %v", inst.Status)
-		if inst.Status == "RUNNING" {
-			break
-		}
-	}
-	err = StopWindowsVM(ctx, svc, projectID)
-	if err != nil {
-		t.Errorf("Failed to stop Windows VM: %v", err)
-	}
-}
 
 func TestZipUploadLinux(t *testing.T) {
 	//TODO: make this hermetic, so it doesn't rely on /workspace.
@@ -54,28 +22,6 @@ func TestZipUploadLinux(t *testing.T) {
 	_, _, err = ZipUploadLinux(ctx, client, projectID)
 	if err != nil {
 		t.Errorf("Failed to zip and upload dir: %v", err)
-	}
-}
-
-func TestResetWindowsPassword(t *testing.T) {
-	ctx := context.Background()
-	svc, err := GCEService(ctx)
-	if err != nil {
-		t.Errorf("Error starting GCE service %v", err)
-	}
-	user, err := user.Current()
-	if err != nil {
-		t.Errorf("Error getting current user name %v", err)
-	}
-	inst, err := StartWindowsVM(ctx, svc, projectID)
-	if err != nil {
-		t.Errorf("Failed to start Windows VM: %v", err)
-	}
-	password, err := ResetWindowsPassword(projectID, svc, inst, user.Name)
-	log.Printf("Got password %s", password)
-	err = StopWindowsVM(ctx, svc, projectID)
-	if err != nil {
-		t.Errorf("Failed to stop Windows VM: %v", err)
 	}
 }
 
@@ -108,13 +54,14 @@ func TestRunRemoteCommand(t *testing.T) {
 
 func TestPullContainer(t *testing.T) {
 	client := newFakeClient()
+	s := Server{
+		Client: client,
+	}
 	tests := []struct {
-		client    Clientlike
 		container string
 		want      []string
 	}{
 		{
-			client:    client,
 			container: "gcr.io/test/test",
 			want:      []string{"gcloud --quiet auth configure-docker", "docker pull gcr.io/test/test"},
 		},
@@ -122,7 +69,7 @@ func TestPullContainer(t *testing.T) {
 
 	for _, test := range tests {
 		client.commands = []string{}
-		err := PullContainer(test.client, test.container)
+		err := s.PullContainer(test.container)
 		if err != nil {
 			t.Errorf("Received error: %v", err)
 		}
@@ -135,14 +82,15 @@ func TestPullContainer(t *testing.T) {
 
 func TestDownloadUnzipWindows(t *testing.T) {
 	client := newFakeClient()
+	s := Server{
+		Client: client,
+	}
 	tests := []struct {
-		client     Clientlike
 		bucketname string
 		filename   string
 		want       []string
 	}{
 		{
-			client:     client,
 			bucketname: "test-bucket",
 			filename:   "test-filename.zip",
 			want: []string{
@@ -151,7 +99,6 @@ func TestDownloadUnzipWindows(t *testing.T) {
 			},
 		},
 		{
-			client:     client,
 			bucketname: "test-bucket",
 			filename:   "folder/filename.zip",
 			want: []string{
@@ -160,7 +107,6 @@ func TestDownloadUnzipWindows(t *testing.T) {
 			},
 		},
 		{
-			client:     client,
 			bucketname: "test-bucket",
 			filename:   "folder1/folder2/filename.zip",
 			want: []string{
@@ -172,7 +118,7 @@ func TestDownloadUnzipWindows(t *testing.T) {
 
 	for _, test := range tests {
 		client.commands = []string{}
-		err := DownloadUnzipWindows(test.client, test.bucketname, test.filename)
+		err := s.DownloadUnzipWindows(test.bucketname, test.filename)
 		if err != nil {
 			t.Errorf("Received error: %v", err)
 		}
@@ -185,13 +131,14 @@ func TestDownloadUnzipWindows(t *testing.T) {
 
 func TestRunContainer(t *testing.T) {
 	client := newFakeClient()
+	s := Server{
+		Client: client,
+	}
 	tests := []struct {
-		client    Clientlike
 		container string
 		want      []string
 	}{
 		{
-			client:    client,
 			container: "gcr.io/test/test",
 			want:      []string{`docker run -it --mount C:\workspace gcr.io/test/test`},
 		},
@@ -199,7 +146,7 @@ func TestRunContainer(t *testing.T) {
 
 	for _, test := range tests {
 		client.commands = []string{}
-		err := RunContainer(test.client, test.container)
+		err := s.RunContainer(test.container)
 		if err != nil {
 			t.Errorf("Received error: %v", err)
 		}
@@ -212,14 +159,15 @@ func TestRunContainer(t *testing.T) {
 
 func TestZipUploadWindows(t *testing.T) {
 	client := newFakeClient()
+	s := Server{
+		Client: client,
+	}
 	tests := []struct {
-		client     Clientlike
 		bucketname string
 		filename   string
 		want       []string
 	}{
 		{
-			client:     client,
 			bucketname: "test-bucket",
 			filename:   "test-filename.zip",
 			want: []string{
@@ -231,7 +179,7 @@ func TestZipUploadWindows(t *testing.T) {
 
 	for _, test := range tests {
 		client.commands = []string{}
-		err := ZipUploadWindows(test.client, test.bucketname, test.filename)
+		err := s.ZipUploadWindows(test.bucketname, test.filename)
 		if err != nil {
 			t.Errorf("Received error: %v", err)
 		}
