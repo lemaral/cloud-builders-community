@@ -327,8 +327,8 @@ func ReadFileFromGCS(ctx context.Context, client *storage.Client, bucketname str
 	return bytes, nil
 }
 
-//ZipUploadDir zips and uploads a dir to GCS.
-func ZipUploadDir(ctx context.Context, client *storage.Client, projectID string) (string, string, error) {
+//ZipUploadLinux zips and uploads a dir to GCS.
+func ZipUploadLinux(ctx context.Context, client *storage.Client, projectID string) (string, string, error) {
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
 
@@ -380,13 +380,129 @@ func ZipUploadDir(ctx context.Context, client *storage.Client, projectID string)
 	return bucketname, filename, nil
 }
 
+//Clientlike allows mocking of winrm.Client for test purposes.
+type Clientlike interface {
+	Run(string, io.Writer, io.Writer) (int, error)
+}
+
 //OpenWindowsClient opens a connection to the Windows host.
 func OpenWindowsClient(host string, port int, user string, pass string) (*winrm.Client, error) {
 	endpoint := winrm.NewEndpoint(host, port, true, true, nil, nil, nil, 0)
 	client, err := winrm.NewClient(endpoint, user, pass)
 	if err != nil {
-		log.Printf("Error opening connection to Windows host: %v", err)
+		log.Printf("Error opening client connection to Windows host: %v", err)
 		return nil, err
 	}
 	return client, nil
+}
+
+//RunRemoteCommand runs a command on a Windows server.
+func RunRemoteCommand(client Clientlike, stdout io.Writer, cmd string) error {
+	var stderr bytes.Buffer
+	exit, err := client.Run(cmd, stdout, &stderr)
+	if err != nil {
+		log.Printf("Client experienced error running command: %+v", err)
+		return err
+	}
+	if exit != 0 {
+		log.Printf("Client received non-zero error code %d, stderr %s", exit, stderr.String())
+	}
+	return nil
+}
+
+//PullContainer configures GCR and pulls container.
+func PullContainer(client Clientlike, name string) error {
+	cmd := "gcloud --quiet auth configure-docker"
+	out := bytes.NewBuffer([]byte{})
+	err := RunRemoteCommand(client, out, cmd)
+	if err != nil {
+		log.Printf("Unable to configure gcloud as Docker credential helper: %s", out)
+		return err
+	}
+	log.Println(out.String())
+	cmd = fmt.Sprintf("docker pull %s", name)
+	out = bytes.NewBuffer([]byte{})
+	err = RunRemoteCommand(client, out, cmd)
+	if err != nil {
+		log.Printf("Unable to pull container: %s", out)
+		return err
+	}
+	log.Println(out.String())
+	return nil
+}
+
+//DownloadUnzipWindows downloads workspace from GCS and unzips.
+func DownloadUnzipWindows(client Clientlike, bucketname string, filename string) error {
+	//Strip directories from filename
+	var stripped string
+	fparts := strings.Split(filename, "/")
+	l := len(fparts)
+	if l > 1 {
+		stripped = fparts[l-1]
+	} else {
+		stripped = filename
+	}
+	cmd := fmt.Sprintf("gsutil cp gs://%s/%s C:\\%s", bucketname, filename, stripped)
+	out := bytes.NewBuffer([]byte{})
+	err := RunRemoteCommand(client, out, cmd)
+	if err != nil {
+		log.Printf("Unable to download workspace zip from GCS: %s", out)
+		return err
+	}
+	log.Println(out.String())
+	//TODO: Check this gives the correct behavior on Windows
+	cmd = fmt.Sprintf("cd C:\\ & unzip C:\\%s C:\\workspace", stripped)
+	out = bytes.NewBuffer([]byte{})
+	err = RunRemoteCommand(client, out, cmd)
+	if err != nil {
+		log.Printf("Unable to unzip on remote Windows machine: %s", out)
+		return err
+	}
+	log.Println(out.String())
+	return nil
+}
+
+//RunContainer starts the container on the Windows server.
+func RunContainer(client Clientlike, name string) error {
+	//TODO: Check this is the correct Docker mount command.
+	cmd := fmt.Sprintf("docker run -it --mount C:\\workspace %s", name)
+	out := os.Stdout //redirect output straight to tty
+	err := RunRemoteCommand(client, out, cmd)
+	if err != nil {
+		log.Printf("Unable to run container remotely: %+v", err)
+		return err
+	}
+	return nil
+}
+
+//ZipUploadWindows zips the workspace and uploads back to GCS, overwriting the previous one.
+func ZipUploadWindows(client Clientlike, bucketname string, filename string) error {
+	//Strip directories from filename
+	var stripped string
+	fparts := strings.Split(filename, "/")
+	l := len(fparts)
+	if l > 1 {
+		stripped = fparts[l-1]
+	} else {
+		stripped = filename
+	}
+	//TODO: Check this gives the correct behavior on Windows
+	cmd := fmt.Sprintf("cd C:\\ & zip C:\\%s C:\\workspace", stripped)
+	out := bytes.NewBuffer([]byte{})
+	err := RunRemoteCommand(client, out, cmd)
+	if err != nil {
+		log.Printf("Unable to zip on remote Windows machine: %s", out)
+		return err
+	}
+	log.Println(out.String())
+
+	cmd = fmt.Sprintf("gsutil cp C:\\%s gs://%s/%s", stripped, bucketname, filename)
+	out = bytes.NewBuffer([]byte{})
+	err = RunRemoteCommand(client, out, cmd)
+	if err != nil {
+		log.Printf("Unable to upload workspace zip to GCS: %s", out)
+		return err
+	}
+	log.Println(out.String())
+	return nil
 }

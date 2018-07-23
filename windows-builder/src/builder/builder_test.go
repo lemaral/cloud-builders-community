@@ -1,9 +1,12 @@
 package builder
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log"
 	"os/user"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -41,14 +44,14 @@ func TestStartRefreshStopWindowsVM(t *testing.T) {
 	}
 }
 
-func TestZipUploadDir(t *testing.T) {
+func TestZipUploadLinux(t *testing.T) {
 	//TODO: make this hermetic, so it doesn't rely on /workspace.
 	ctx := context.Background()
 	client, err := NewGCSClient(ctx)
 	if err != nil {
 		t.Errorf("Failed to create GCS client: %v", err)
 	}
-	_, _, err = ZipUploadDir(ctx, client, projectID)
+	_, _, err = ZipUploadLinux(ctx, client, projectID)
 	if err != nil {
 		t.Errorf("Failed to zip and upload dir: %v", err)
 	}
@@ -73,5 +76,168 @@ func TestResetWindowsPassword(t *testing.T) {
 	err = StopWindowsVM(ctx, svc, projectID)
 	if err != nil {
 		t.Errorf("Failed to stop Windows VM: %v", err)
+	}
+}
+
+type fakeClient struct {
+	stdout   io.Writer
+	stderr   io.Writer
+	commands []string
+}
+
+func newFakeClient() *fakeClient {
+	return &fakeClient{
+		stdout:   bytes.NewBuffer([]byte{}),
+		stderr:   bytes.NewBuffer([]byte{}),
+		commands: []string{},
+	}
+}
+
+func (f *fakeClient) Run(command string, stdout io.Writer, stderr io.Writer) (int, error) {
+	f.commands = append(f.commands, command)
+	return 0, nil
+}
+
+func TestRunRemoteCommand(t *testing.T) {
+	client := newFakeClient()
+	_, err := client.Run("Hello world", client.stdout, client.stderr)
+	if err != nil {
+		t.Errorf("Received error: %+v", err)
+	}
+}
+
+func TestPullContainer(t *testing.T) {
+	client := newFakeClient()
+	tests := []struct {
+		client    Clientlike
+		container string
+		want      []string
+	}{
+		{
+			client:    client,
+			container: "gcr.io/test/test",
+			want:      []string{"gcloud --quiet auth configure-docker", "docker pull gcr.io/test/test"},
+		},
+	}
+
+	for _, test := range tests {
+		client.commands = []string{}
+		err := PullContainer(test.client, test.container)
+		if err != nil {
+			t.Errorf("Received error: %v", err)
+		}
+		if !reflect.DeepEqual(client.commands, test.want) {
+			t.Errorf("Received %v, expected %v", client.commands, test.want)
+		}
+
+	}
+}
+
+func TestDownloadUnzipWindows(t *testing.T) {
+	client := newFakeClient()
+	tests := []struct {
+		client     Clientlike
+		bucketname string
+		filename   string
+		want       []string
+	}{
+		{
+			client:     client,
+			bucketname: "test-bucket",
+			filename:   "test-filename.zip",
+			want: []string{
+				`gsutil cp gs://test-bucket/test-filename.zip C:\test-filename.zip`,
+				`cd C:\ & unzip C:\test-filename.zip C:\workspace`,
+			},
+		},
+		{
+			client:     client,
+			bucketname: "test-bucket",
+			filename:   "folder/filename.zip",
+			want: []string{
+				`gsutil cp gs://test-bucket/folder/filename.zip C:\filename.zip`,
+				`cd C:\ & unzip C:\filename.zip C:\workspace`,
+			},
+		},
+		{
+			client:     client,
+			bucketname: "test-bucket",
+			filename:   "folder1/folder2/filename.zip",
+			want: []string{
+				`gsutil cp gs://test-bucket/folder1/folder2/filename.zip C:\filename.zip`,
+				`cd C:\ & unzip C:\filename.zip C:\workspace`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		client.commands = []string{}
+		err := DownloadUnzipWindows(test.client, test.bucketname, test.filename)
+		if err != nil {
+			t.Errorf("Received error: %v", err)
+		}
+		if !reflect.DeepEqual(client.commands, test.want) {
+			t.Errorf("\nReceived %v\nExpected %v", client.commands, test.want)
+		}
+
+	}
+}
+
+func TestRunContainer(t *testing.T) {
+	client := newFakeClient()
+	tests := []struct {
+		client    Clientlike
+		container string
+		want      []string
+	}{
+		{
+			client:    client,
+			container: "gcr.io/test/test",
+			want:      []string{`docker run -it --mount C:\workspace gcr.io/test/test`},
+		},
+	}
+
+	for _, test := range tests {
+		client.commands = []string{}
+		err := RunContainer(test.client, test.container)
+		if err != nil {
+			t.Errorf("Received error: %v", err)
+		}
+		if !reflect.DeepEqual(client.commands, test.want) {
+			t.Errorf("Received %v, expected %v", client.commands, test.want)
+		}
+
+	}
+}
+
+func TestZipUploadWindows(t *testing.T) {
+	client := newFakeClient()
+	tests := []struct {
+		client     Clientlike
+		bucketname string
+		filename   string
+		want       []string
+	}{
+		{
+			client:     client,
+			bucketname: "test-bucket",
+			filename:   "test-filename.zip",
+			want: []string{
+				`cd C:\ & zip C:\test-filename.zip C:\workspace`,
+				`gsutil cp C:\test-filename.zip gs://test-bucket/test-filename.zip`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		client.commands = []string{}
+		err := ZipUploadWindows(test.client, test.bucketname, test.filename)
+		if err != nil {
+			t.Errorf("Received error: %v", err)
+		}
+		if !reflect.DeepEqual(client.commands, test.want) {
+			t.Errorf("\nReceived %v\nExpected %v", client.commands, test.want)
+		}
+
 	}
 }
