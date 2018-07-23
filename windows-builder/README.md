@@ -11,13 +11,13 @@ If a Windows host, username and password are provided to the build step, then th
 
 First, clone this code and build the builder:
 
-```
+```bash
 gcloud container builds submit --config=cloudbuild.yaml .
 ```
 
 Then, if you wish to create Windows VMs on Compute Engine automatically, grant permissions to your Container Builder service account:
 
-```
+```bash
 # Setup IAM
 export PROJECT=$(gcloud info --format='value(config.project)')
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT --format 'value(projectNumber)')
@@ -29,7 +29,7 @@ gcloud services enable compute.googleapis.com
 
 Then, use the build step in your `cloudbuild.yaml` as follows, giving the name of your Windows container image in `NAME`.  For example:
 
-```
+```yaml
 steps:
 - name: gcr.io/$PROJECT_ID/windows-builder
   env:
@@ -42,7 +42,7 @@ steps:
 
 Or, to start a Windows VM automatically:
 
-```
+```yaml
 steps:
 - name: gcr.io/$PROJECT_ID/windows-builder
   env:
@@ -52,5 +52,16 @@ steps:
 
 ## Security
 
-Traffic between Container Builder and the Windows VM is encrypted over SSL, and the initial password reset follows Google best practices.  However, enterprise servers using Kerberos or other more advanced authentication techniques will require code changes.
+Traffic between Container Builder and the Windows VM is encrypted over SSL, and the initial password reset follows Google best practices.  However, enterprise servers using Kerberos or other more advanced authentication techniques will require code change in the upstream WinRM library.
 
+## Creating a persistent Windows VM manually
+
+To speed up frequent builds, you may wish to create a persistent Windows VM.  To create such a server named `winvm`, execute the following commands:
+
+```bash
+gcloud beta compute instances create winvm --image=windows-server-1709-dc-core-for-containers-v20180508 --image-project=windows-cloud
+gcloud compute firewall-rules create allow-winrm --direction=INGRESS --priority=1000 --network=default --action=ALLOW --rules=tcp:5986 --source-ranges=0.0.0.0/0
+gcloud --quiet beta compute reset-windows-password winvm
+```
+
+`gcloud` will then print the IP address, username, and password for your new VM, which can be used in the configuration above.
