@@ -31,7 +31,7 @@ type Server struct {
 	Client   Clientlike
 }
 
-//Clientlike allows mocking of winrm.Client for test purposes.
+//Clientlike is something which allows us to execute commands on a remote server.
 type Clientlike interface {
 	Run(string, io.Writer, io.Writer) (int, error)
 }
@@ -260,5 +260,41 @@ func (s *Server) ZipUploadWindows(bucketname string, filename string) error {
 		return err
 	}
 	log.Println(out.String())
+	return nil
+}
+
+//DownloadUnzipLinux downloads a zip from GCS and expands back into the workspace.
+func DownloadUnzipLinux(ctx context.Context, client *storage.Client, bucketname string, filename string) error {
+	//Read file from GCS.
+	b, err := ReadFileFromGCS(ctx, client, bucketname, filename)
+	br := bytes.NewReader(b)
+	l := int64(len(b))
+
+	//Read and unzip
+	r, err := zip.NewReader(br, l)
+	if err != nil {
+		log.Printf("Received error opening zip from GCS: %+v", err)
+		return err
+	}
+	for _, f := range r.File {
+		localpath := fmt.Sprintf("/workspace/%s", f.Name)
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(localpath, os.ModePerm)
+		} else {
+			rc, err := f.Open()
+			defer rc.Close()
+			if err != nil {
+				log.Printf("Failed to open file %s from zip, continuing", f.Name)
+				break
+			}
+			out, err := os.Create(localpath)
+			defer out.Close()
+			if _, err := io.Copy(out, rc); err != nil {
+				log.Printf("Failed to write data to %s: %+v, continuing", localpath, err)
+				break
+			}
+			out.Sync()
+		}
+	}
 	return nil
 }
