@@ -25,7 +25,7 @@ const (
 
 //NewServer creates a new Windows server on GCE.
 func NewServer(ctx context.Context, projectID string) Server {
-	log.Print("Starting Windows VM server")
+	log.Printf("Starting Windows VM server in project %s", projectID)
 	svc, err := GCEService(ctx)
 	if err != nil {
 		log.Fatalf("Failed to start GCE service: %v", err)
@@ -34,7 +34,7 @@ func NewServer(ctx context.Context, projectID string) Server {
 	if err != nil {
 		log.Fatalf("Failed to start Windows VM: %v", err)
 	}
-	//TODO: get host IP from inst, set the username, reset password
+	//TODO: get host IP from inst metadata, set the username, reset password
 	hostname := ""
 	username := ""
 	password, err := ResetWindowsPassword(projectID, svc, inst, username)
@@ -74,6 +74,9 @@ func GCEService(ctx context.Context) (*compute.Service, error) {
 
 //StartWindowsVM starts a Windows VM on GCE and returns host, username, password.
 func StartWindowsVM(ctx context.Context, service *compute.Service, projectID string) (*compute.Instance, error) {
+	if projectID == "" {
+		log.Fatalf("Project ID must be provided.")
+	}
 	startupCmd := `winrm set winrm/config/Service/Auth @{Basic="true”} & winrm set winrm/config/Service @{AllowUnencrypted="true”}`
 	instance := &compute.Instance{
 		Name:        instanceName,
