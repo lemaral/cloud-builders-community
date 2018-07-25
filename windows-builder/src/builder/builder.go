@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	prefix    = "https://www.googleapis.com/compute/v1/projects/"
-	imageURL  = prefix + "windows-cloud/global/images/windows-server-1709-dc-core-for-containers-v20180508"
-	winrmport = 5986
+	prefix          = "https://www.googleapis.com/compute/v1/projects/"
+	imageURL        = prefix + "windows-cloud/global/images/windows-server-1709-dc-core-for-containers-v20180508"
+	winrmport       = 5986
+	powershellunzip = `powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('%s', '%s'); }`
 )
 
 //Server represents a remote Windows server.
@@ -207,7 +208,8 @@ func (s *Server) DownloadUnzipWindows(bucketname string, filename string) error 
 	}
 	log.Println(out.String())
 	//TODO: Check this gives the correct behavior on Windows
-	cmd = fmt.Sprintf("cd C:\\ & unzip C:\\%s C:\\workspace", stripped)
+	//cf.: powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('foo.zip', 'bar'); }"
+	cmd = fmt.Sprintf("cd C:\\ & "+powershellunzip, stripped, "C:\\workspace")
 	out = bytes.NewBuffer([]byte{})
 	err = s.RunRemoteCommand(out, cmd)
 	if err != nil {

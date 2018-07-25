@@ -35,7 +35,7 @@ func NewServer(ctx context.Context, projectID string) Server {
 	if err != nil {
 		log.Fatalf("Failed to start Windows VM: %v", err)
 	}
-	//TODO: set host, username from inst
+	//TODO: get host IP from inst, set the username, reset password
 	hostname := ""
 	username := ""
 	password, err := ResetWindowsPassword(projectID, svc, inst, username)
