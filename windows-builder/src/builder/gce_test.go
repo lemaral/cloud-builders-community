@@ -3,10 +3,15 @@ package builder
 import (
 	"context"
 	"log"
+	"os"
 	"os/user"
 	"testing"
 	"time"
 )
+
+func init() {
+	projectID = os.Getenv("PROJECT_ID")
+}
 
 func TestStartRefreshStopWindowsVM(t *testing.T) {
 	ctx := context.Background()
@@ -31,7 +36,7 @@ func TestStartRefreshStopWindowsVM(t *testing.T) {
 			break
 		}
 	}
-	err = StopWindowsVM(ctx, svc, projectID)
+	err = StopWindowsVM(ctx, projectID)
 	if err != nil {
 		t.Errorf("Failed to stop Windows VM: %v", err)
 	}
@@ -53,7 +58,7 @@ func TestResetWindowsPassword(t *testing.T) {
 	}
 	password, err := ResetWindowsPassword(projectID, svc, inst, user.Name)
 	log.Printf("Got password %s", password)
-	err = StopWindowsVM(ctx, svc, projectID)
+	err = StopWindowsVM(ctx, projectID)
 	if err != nil {
 		t.Errorf("Failed to stop Windows VM: %v", err)
 	}

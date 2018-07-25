@@ -15,6 +15,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/masterzen/winrm"
+	compute "google.golang.org/api/compute/v1"
 )
 
 const (
@@ -30,6 +31,7 @@ type Server struct {
 	Username string
 	Password string
 	Client   Clientlike
+	Instance *compute.Instance
 }
 
 //Clientlike is something which allows us to execute commands on a remote server.

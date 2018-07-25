@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	zone           = "us-central1-f"
-	instanceName   = "windows-builder"
-	computeTimeout = 120 * time.Second
+	zone         = "us-central1-f"
+	instanceName = "windows-builder"
 )
 
 //NewServer creates a new Windows server on GCE.
@@ -39,6 +38,9 @@ func NewServer(ctx context.Context, projectID string) Server {
 	hostname := ""
 	username := ""
 	password, err := ResetWindowsPassword(projectID, svc, inst, username)
+	if err != nil {
+		log.Fatalf("Failed to reset Windows password: %+v", err)
+	}
 
 	//Set firewall rule.
 	err = SetFirewallRule(ctx, svc, projectID)
@@ -50,6 +52,7 @@ func NewServer(ctx context.Context, projectID string) Server {
 		Hostname: hostname,
 		Username: username,
 		Password: password,
+		Instance: inst,
 	}
 }
 
@@ -121,13 +124,19 @@ func StartWindowsVM(ctx context.Context, service *compute.Service, projectID str
 		log.Printf("GCE Instances insert call failed: %v", err)
 		return nil, err
 	}
+	err = WaitForComputeOperation(service, projectID, zone, op)
+	if err != nil {
+		log.Printf("Wait for instance start failed: %v", err)
+		return nil, err
+	}
+
 	etag := op.Header.Get("Etag")
 	inst, err := service.Instances.Get(projectID, zone, instanceName).IfNoneMatch(etag).Do()
 	if err != nil {
 		log.Printf("Could not get GCE Instance details after creation: %v", err)
 		return nil, err
 	}
-	log.Printf("Successfully created instance %#v", inst.Name)
+	log.Printf("Successfully created instance: %s", inst.Name)
 
 	return inst, nil
 }
@@ -143,8 +152,14 @@ func RefreshWindowsVM(ctx context.Context, service *compute.Service, projectID s
 }
 
 //StopWindowsVM stops a Windows VM on GCE.
-func StopWindowsVM(ctx context.Context, service *compute.Service, projectID string) error {
-	_, err := service.Instances.Delete(projectID, zone, instanceName).Do()
+func StopWindowsVM(ctx context.Context, projectID string) error {
+	svc, err := GCEService(ctx)
+	if err != nil {
+		log.Printf("Could not create GCE Service: %v", err)
+		return err
+	}
+
+	_, err = svc.Instances.Delete(projectID, zone, instanceName).Do()
 	if err != nil {
 		log.Printf("Could not delete instance: %v", err)
 		return err
@@ -242,7 +257,7 @@ func ResetWindowsPassword(projectID string, service *compute.Service, inst *comp
 
 	//Read and decode password
 	log.Print("Waiting for Windows password response.")
-	timeout := time.Now().Add(time.Minute * 3)
+	timeout := time.Now().Add(time.Minute * 5)
 	hash := sha1.New()
 	random := rand.Reader
 	for time.Now().Before(timeout) {
@@ -279,8 +294,8 @@ func ResetWindowsPassword(projectID string, service *compute.Service, inst *comp
 
 //WaitForComputeOperation waits for a compute operation
 func WaitForComputeOperation(service *compute.Service, projectID string, zone string, op *compute.Operation) error {
-	log.Printf("Waiting for operation %+v to complete", op.Name)
-	timeout := time.Now().Add(computeTimeout)
+	log.Printf("Waiting for %+v to complete", op.Name)
+	timeout := time.Now().Add(120 * time.Second)
 	for time.Now().Before(timeout) {
 		newop, err := service.ZoneOperations.Get(projectID, zone, op.Name).Do()
 		if err != nil {

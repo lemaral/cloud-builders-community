@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"reflect"
 	"testing"
 )
 
-const (
-	projectID = "cloud-builders-community-test"
-)
+var projectID string
+
+func init() {
+	projectID = os.Getenv("PROJECT_ID")
+}
 
 func TestZipUploadLinux(t *testing.T) {
 	//TODO: make this hermetic, so it doesn't rely on /workspace.
