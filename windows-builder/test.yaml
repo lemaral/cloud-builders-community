@@ -1,0 +1,5 @@
+steps:
+- name: gcr.io/$PROJECT_ID/windows-builder
+  env:
+  - 'NAME=hello-world'
+  - 'PROJECT_ID=$PROJECT_ID'
