@@ -1,28 +1,15 @@
 package builder
 
-import (
-	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha1"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"log"
-	"strings"
-	"time"
-
-	"golang.org/x/oauth2/google"
-	compute "google.golang.org/api/compute/v1"
-)
-
 const (
-	zone         = "us-central1-f"
-	instanceName = "windows-builder"
+	zone            = "us-central1-f"
+	instanceName    = "windows-builder"
+	prefix          = "https://www.googleapis.com/compute/v1/projects/"
+	imageURL        = prefix + "windows-cloud/global/images/windows-server-1709-dc-core-for-containers-v20180508"
+	winrmport       = 5986
+	powershellunzip = `powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('%s', '%s'); }`
 )
 
+/*
 //NewServer creates a new Windows server on GCE.
 func NewServer(ctx context.Context, projectID string) Server {
 	log.Printf("Starting Windows VM server in project %s", projectID)
@@ -313,3 +300,4 @@ func WaitForComputeOperation(service *compute.Service, projectID string, zone st
 	err := fmt.Errorf("Compute operation %s timed out", op.Name)
 	return err
 }
+*/
