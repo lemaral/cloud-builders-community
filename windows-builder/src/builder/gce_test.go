@@ -1,7 +1,14 @@
 package builder
 
-/*
-func TestStartRefreshStopWindowsVM(t *testing.T) {
+import (
+	"context"
+	"log"
+	"os/user"
+	"testing"
+	"time"
+)
+
+func TestStartRefreshWindowsVM(t *testing.T) {
 	ctx := context.Background()
 	svc, err := GCEService(ctx)
 	if err != nil {
@@ -24,7 +31,11 @@ func TestStartRefreshStopWindowsVM(t *testing.T) {
 			break
 		}
 	}
-	err = StopWindowsVM(ctx, projectID)
+}
+
+func TestStopWindowsVM(t *testing.T) {
+	ctx := context.Background()
+	err := StopWindowsVM(ctx, projectID)
 	if err != nil {
 		t.Errorf("Failed to stop Windows VM: %v", err)
 	}
@@ -51,4 +62,3 @@ func TestResetWindowsPassword(t *testing.T) {
 		t.Errorf("Failed to stop Windows VM: %v", err)
 	}
 }
-*/

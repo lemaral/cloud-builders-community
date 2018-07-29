@@ -1,5 +1,26 @@
 package builder
 
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os/exec"
+
+	"golang.org/x/oauth2/google"
+	compute "google.golang.org/api/compute/v1"
+
+	"log"
+	"strings"
+
+	"time"
+)
+
 const (
 	zone            = "us-central1-f"
 	instanceName    = "windows-builder"
@@ -9,9 +30,20 @@ const (
 	powershellunzip = `powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::ExtractToDirectory('%s', '%s'); }`
 )
 
-/*
-//NewServer creates a new Windows server on GCE.
-func NewServer(ctx context.Context, projectID string) Server {
+var projectID string
+
+//Init gets the project ID from gcloud.
+func Init() {
+	out, err := exec.Command("gcloud config get-value project").Output()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Got default project %s from gcloud", out)
+	projectID = string(out)
+}
+
+//NewRemote creates a new Windows server on GCE.
+func NewRemote(ctx context.Context, projectID string) Remote {
 	log.Printf("Starting Windows VM server in project %s", projectID)
 	svc, err := GCEService(ctx)
 	if err != nil {
@@ -23,7 +55,7 @@ func NewServer(ctx context.Context, projectID string) Server {
 	}
 	//TODO: get host IP from inst metadata, set the username, reset password
 	hostname := ""
-	username := ""
+	username := "windows-builder"
 	password, err := ResetWindowsPassword(projectID, svc, inst, username)
 	if err != nil {
 		log.Fatalf("Failed to reset Windows password: %+v", err)
@@ -35,11 +67,10 @@ func NewServer(ctx context.Context, projectID string) Server {
 		log.Fatalf("Failed to set ingress firewall rule: %v", err)
 	}
 
-	return Server{
+	return Remote{
 		Hostname: hostname,
 		Username: username,
 		Password: password,
-		Instance: inst,
 	}
 }
 
@@ -61,9 +92,7 @@ func GCEService(ctx context.Context) (*compute.Service, error) {
 
 //StartWindowsVM starts a Windows VM on GCE and returns host, username, password.
 func StartWindowsVM(ctx context.Context, service *compute.Service, projectID string) (*compute.Instance, error) {
-	if projectID == "" {
-		log.Fatalf("Project ID must be provided.")
-	}
+	Init()
 	startupCmd := `winrm set winrm/config/Service/Auth @{Basic="true”} & winrm set winrm/config/Service @{AllowUnencrypted="true”}`
 	instance := &compute.Instance{
 		Name:        instanceName,
@@ -300,4 +329,3 @@ func WaitForComputeOperation(service *compute.Service, projectID string, zone st
 	err := fmt.Errorf("Compute operation %s timed out", op.Name)
 	return err
 }
-*/
